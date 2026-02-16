@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 ---
 title: "ENV 797 - Time Series Analysis for Energy and Environment Applications | Spring 2026"
 subtitle: "Assignment 4 - Due date 02/10/26"
@@ -263,4 +264,4 @@ print(adf.test(renew_yearly, alternative = "stationary"))
 The Mann-Kendall test strongly rejects the null hypothesis of no trend, indicating a significant increasing trend in the yearly average.
 The Spearman correlation test confirms a strong deterministic monotonic relationship between the series and time.
 However, the ADF test fails to reject the null hypothesis of a unit root, suggesting that the series is non-stationary and exhibits a stochastic trend.
-These results are consistent with previous visual and ACF-based analyses. Since the trend is stochastic, differencing is required to achieve stationarity.
+
