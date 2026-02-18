@@ -1,0 +1,304 @@
+---
+title: "ENV 797 - Time Series Analysis for Energy and Environment Applications | Spring 2026"
+subtitle: "Assignment 5 - Due date 02/17/26"
+author: "Jeffrey Chu"
+output: pdf_document
+geometry: margin=2.54cm
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+cat("Knit working directory:\n")
+print(getwd())
+
+cat("\nFiles here:\n")
+print(list.files())
+
+```
+
+## Directions
+  
+You should open the .rmd file corresponding to this assignment on RStudio. The file is available on our class repository on Github. 
+
+Once you have the file open on your local machine the first thing you will do is rename the file such that it includes your first and last name (e.g., "LuanaLima_TSA_A05_Sp26.Rmd"). Then change "Student Name" on line 3 with your name. 
+
+Then you will start working through the assignment by  **creating code and output** that answer each question. Be sure to use this assignment document. Your report should contain the answer to each question and any plots/tables you obtained (when applicable).
+
+When you have completed the assignment, **Knit** the text and code into a single PDF file. Submit this pdf using Canvas. 
+```{r setup, include=FALSE} 
+knitr::opts_chunk$set(echo = TRUE,tidy.opts=list(width.cutoff=80), tidy=FALSE) 
+```
+
+R packages needed for this assignment: "readxl", "ggplot2", "forecast","tseries", and "Kendall". Install these packages, if you haven't done yet. Do not forget to load them before running your script, since they are NOT default packages.\\
+
+```{r}
+#Load/install required package here
+library(forecast)
+library(tseries)
+library(ggplot2)
+library(Kendall)
+library(lubridate)
+library(tidyverse)  #load this package so yon clean the data frame using pipes
+library(readxl)
+```
+
+Consider the same data you used for A04 from the spreadsheet "Table_10.1_Renewable_Energy_Production_and_Consumption_by_Source.xlsx". The data comes from the US Energy Information and Administration and corresponds to the December 2025 Monthly Energy Review.
+
+```{r}
+# Import data
+energy_data <- read_excel(
+  "Table_10.1_Renewable_Energy_Production_and_Consumption_by_Source.xlsx",
+  skip = 12,
+  sheet = "Monthly Data",
+  col_names = FALSE
+)
+
+
+# Extract column names
+read_col_names <- read_excel(
+  "Table_10.1_Renewable_Energy_Production_and_Consumption_by_Source.xlsx",
+  skip = 10,
+  n_max = 1,
+  sheet = "Monthly Data",
+  col_names = FALSE
+)
+
+colnames(energy_data) <- as.character(unlist(read_col_names))
+
+nobs <- nrow(energy_data)
+
+nobs=nrow(energy_data)
+nvar=ncol(energy_data)
+
+head(energy_data)
+
+```
+
+## Handling Missing Data
+
+### Q1
+
+Using the original dataset, create a new data frame that includes only the following variables: **Date, Solar Energy Consumption and Wind Energy Consumption**.
+Check the class of columns, you will see that they are stored are characters instead of numbers. Because solar generation begins later in the sample, the early observations are recorded as “Not Available”. Convert the data to numeric, the "Not Available" will became NAs.
+
+You may either filter out the “Not Available” rows and then convert the column to numeric or convert first and then remove missing values using drop_na() (or na.omit()). If you are comfortable using pipes for data wrangling, please do so. 
+
+Important: Note that we dropping the missing observations instead of interpolating is becasue they only happen in the beginning of the series!
+
+```{r}
+new_energy_df <- energy_data %>%
+  select(Month,
+         `Solar Energy Consumption`,
+         `Wind Energy Consumption`) %>%
+  rename(Date = Month) %>%
+  mutate(
+    Date = as.Date(substr(Date, 1, 10)), 
+    `Solar Energy Consumption` =
+      as.numeric(`Solar Energy Consumption`),
+    `Wind Energy Consumption` =
+      as.numeric(`Wind Energy Consumption`)
+  ) %>%
+  drop_na()
+```
+
+### Q2
+
+Plot the Solar and Wind energy consumption over time using ggplot. Plot each series on a separate graph. No need to add legend. Add informative names to the y axis using `ylab()`. Explore the function `scale_x_date()` on ggplot and see if you can change the x axis to improve your plot. Hint: use `scale_x_date(date_breaks = "5 years", date_labels = "%Y")")`
+
+```{r}
+ggplot(new_energy_df,
+       aes(x = Date,
+           y = `Solar Energy Consumption`)) +
+  geom_line() +
+  labs(title="Solar Energy Consumption", 
+        x = "Year", 
+        y = "Solar Energy Consumption (Trillion Btu)")+
+  scale_x_date(date_breaks = "5 years",
+               date_labels = "%Y") +
+  theme_minimal()
+
+ggplot(new_energy_df,
+       aes(x = Date,
+           y = `Wind Energy Consumption`)) +
+  geom_line() +
+  labs(title="Wind Energy Consumption", 
+        x = "Year", 
+        y = "Wind Energy Consumption (Trillion Btu)")+
+  scale_x_date(date_breaks = "5 years",
+               date_labels = "%Y") +
+  theme_minimal()
+```
+
+### Q3
+
+Now plot both series in the same graph, also using ggplot(). Use function `scale_color_manual()` to manually add a legend to ggplot. Make the solar energy consumption red and wind energy consumption blue. Add informative name to the y axis using `ylab("Energy Consumption)`. And use function `scale_x_date()` to set x axis breaks every 5 years.
+
+```{r}
+ggplot(new_energy_df, aes(x = Date)) +
+  geom_line(aes(y = `Solar Energy Consumption`,
+                color = "Solar")) +
+  geom_line(aes(y = `Wind Energy Consumption`,
+                color = "Wind")) +
+  labs(title="Energy Consumption", 
+        x = "Year", 
+        y = "Energy Consumption (Trillion Btu)")+
+  scale_color_manual(
+    values = c("Solar" = "red",
+               "Wind"  = "blue"),
+    name = "Energy Source"
+  ) +
+  scale_x_date(date_breaks = "5 years",
+               date_labels = "%Y") +
+  theme_minimal()
+
+```
+
+
+## Decomposing the time series
+
+The stats package has a function called decompose(). This function only take time series object. As the name says the decompose function will decompose your time series into three components: trend, seasonal and random. This is similar to what we did in the previous script, but in a more automated way. The random component is the time series without seasonal and trend component. 
+
+Additional info on `decompose()`.
+
+1) You have two options: alternative and multiplicative. Multiplicative models exhibit a change in frequency over time.
+2) The trend is not a straight line because it uses a moving average method to detect trend. 
+3) The seasonal component of the time series is found by subtracting the trend component from the original data then grouping the results by month and averaging them. 
+4) The random component, also referred to as the noise component, is composed of all the leftover signal which is not explained by the combination of the trend and seasonal component. 
+
+### Q4
+
+Transform wind and solar series into a time series object and apply the decompose function on them using the additive option, i.e., `decompose(ts_data, type = "additive")`. What can you say about the trend component? What about the random component? Does the random component look random? Or does it appear to still have some seasonality on it?
+
+```{r}
+head(new_energy_df$Date)
+
+wind_ts <- ts(new_energy_df["Wind Energy Consumption"],
+              start = c(1984, 1),
+              frequency = 12)
+solar_ts <- ts(new_energy_df["Solar Energy Consumption"],
+              start = c(1984, 1),
+              frequency = 12)
+
+wind_decomp  <- decompose(wind_ts, type = "additive")
+solar_decomp <- decompose(solar_ts, type = "additive")
+
+plot(wind_decomp)
+title("Wind Energy Consumption")
+
+plot(solar_decomp)
+title("Solar Energy Consumption")
+```
+
+> Answer: 
+The trend component in both series shows strong long-term growth. Solar energy exhibits a  steeper and more accelerated upward trend than wind energy. The random component does not appear purely random, as the variance increases over time and some structure remains, suggesting that the additive model may not fully capture the dynamics of the series.
+
+### Q5
+
+Use the decompose function again but now change the type of the seasonal component from additive to multiplicative. What happened to the random component this time?
+
+```{r}
+wind_decomp_mult  <- decompose(wind_ts,  type = "multiplicative")
+solar_decomp_mult <- decompose(solar_ts, type = "multiplicative")
+
+plot(wind_decomp_mult)
+title("Wind Energy Consumption")
+
+plot(solar_decomp_mult)
+title("Solar Energy Consumption")
+```
+
+>Answer: 
+Under the multiplicative decomposition, the random component becomes more stable compared to the additive model. The variance no longer increases over time, particularly for solar energy. This suggests that the multiplicative model better captures the proportional seasonal effects in the data.
+
+ 
+### Q6
+
+When fitting a model to this data, do you think you need all the historical data? Think about the data from 80s, 90s and early 20s. Are there any information from those years we might need to forecast the next six months of Solar and/or Wind consumption. Explain your response.
+
+> Answer:
+For forecasting the next six months, recent data are more informative than very old observations. The renewable energy market has undergone structural changes over time, so data from the 1980s and 1990s may not reflect current dynamics. Therefore, using only more recent data may improve short-term forecast accuracy.
+
+### Q7
+
+Create a new time series object where historical data starts on January 2014. Hint: use `filter()` function so that you don't need to point to row numbers, .i.e, `filter(xxxx, year(Date) >= 2014 )`. Apply the decompose function `type=additive` to this new time series. Comment on the results. Does the random component look random? 
+
+```{r}
+energy_2014 <- new_energy_df %>%
+  filter(year(Date) >= 2014)
+
+head(energy_2014)
+
+wind_ts_2014 <- ts(new_energy_df["Wind Energy Consumption"],
+              start = c(2014, 1),
+              frequency = 12)
+
+solar_ts_2014 <- ts(new_energy_df["Solar Energy Consumption"],
+              start = c(2014, 1),
+              frequency = 12)
+
+wind_decomp_2014  <- decompose(wind_ts_2014, type = "additive")
+solar_decomp_2014 <- decompose(solar_ts_2014, type = "additive")
+
+plot(wind_decomp_2014)
+title("Wind Energy Consumption since 2014")
+
+plot(solar_decomp_2014)
+title("Solar Energy Consumption since 2014")
+```
+
+> Answer: 
+When restricting the sample to data since 2014, the decomposition results become more stable compared to the full sample. 
+This suggests that structural changes in earlier decades reduced the usefulness of old data. However, even in the recent sample, increasing volatility in the last few years indicates that an additive model may still not fully capture the dynamics of these rapidly growing renewable energy series.
+
+## Identify and Remove outliers
+
+### Q8
+
+Apply the `tsclean()` to both time series object you created on Q4. Did the function removed any outliers from the series? Hint: Use `autoplot()` to check if there is difference between cleaned series and original series.
+
+```{r}
+wind_clean  <- tsclean(wind_ts)
+solar_clean <- tsclean(solar_ts)
+
+autoplot(wind_ts, series="Original")+
+  autolayer(wind_clean, series="Cleaned")+
+  ggtitle("Wind: Original vs. Cleaned")+ 
+  ylab("Wind Energy Consumption")+
+  theme_minimal()
+
+autoplot(solar_ts, series="Original")+
+  autolayer(solar_clean, series="Cleaned")+
+  ggtitle("Solar: Original vs. Cleaned")+ 
+  ylab("Solar Energy Consumption")+
+  theme_minimal()
+
+```
+
+> Answer: 
+The tsclean() function removed several extreme spikes in the more recent years for both wind and solar energy consumption. This suggests that the function identified and adjusted potential outliers, especially during periods of high volatility. However, the overall trend and seasonal structure of the series remain unchanged.
+
+### Q9
+
+Redo number Q8 but now with the time series you created on Q7, i.e., the series starting in 2014. Using what `autoplot()` again what happened now? Did the function removed any outliers from the series?
+
+```{r} 
+wind_clean_2014  <- tsclean(wind_ts_2014)
+solar_clean_2014 <- tsclean(solar_ts_2014)
+
+autoplot(wind_ts_2014, series="Original")+
+  autolayer(wind_clean_2014, series="Cleaned")+
+  ggtitle("Wind: Original vs. Cleaned since 2014")+ 
+  ylab("Wind Energy Consumption")+
+  theme_minimal()
+
+autoplot(solar_ts_2014, series="Original")+
+  autolayer(solar_clean_2014, series="Cleaned")+
+  ggtitle("Solar: Original vs. Cleaned since 2014")+ 
+  ylab("Solar Energy Consumption")+
+  theme_minimal()
+
+```
+
+> Answer: 
+When applying tsclean() to the time series starting in 2014, the function still adjusts some extreme spikes, particularly in the most recent years. This indicates that the function detected and corrected potential outliers mainly during periods of increased volatility.
